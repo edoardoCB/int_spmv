@@ -1,0 +1,14 @@
+#!/bin/bash
+#PBS -N INT_MDE_CIRRUS
+#PBS -q gpu
+#PBS -A dc010-edoardo
+#PBS -l select=1:ncpus=40:ngpus=4
+#PBS -l walltime=0:02:00
+#PBS -l place=scatter:excl
+module load gcc/6.3.0
+module load intel-compilers-17
+module load openmpi
+export OMP_NUM_THREADS=40
+export MKL_NUM_THREADS=1
+cd $PBS_O_WORKDIR
+./intSpmv MDE.csr
