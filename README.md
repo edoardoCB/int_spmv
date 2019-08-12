@@ -1,6 +1,6 @@
 # int_spmv
 
-This project conatins the code to perform the SpMV product.
+This project contains the code to perform the SpMV product.
 
 CSR format.
 	- Naive version
