@@ -1505,7 +1505,7 @@ static void int_axt_com_h1( const UIN ompNT, const UIN bn, const UIN bs, const U
 	      FPT * blk2 = _mm_malloc( lenBlk1 * sizeof(FPT), 64 );
 	      FPT * blkA = _mm_malloc( lenBlkA * sizeof(FPT), 64 );
 
-	#pragma omp parallel for default(shared) private(posAX,posBLK,tid,vtVal,vtRed) num_threads(ompNT) schedule(dynamic) if(_OPENMP)
+	//#pragma omp parallel for default(shared) private(posAX,posBLK,tid,vtVal,vtRed) num_threads(ompNT) schedule(dynamic) if(_OPENMP)
 	for ( posAX = 0, posBLK = 0, tid = 0; posAX < lenAX; posAX = posAX + ts, posBLK = posBLK + thw, tid++ )
 	{
 		vtVal = _mm512_mul_pd( _mm512_load_pd(&ax[posAX]), _mm512_load_pd(&ax[posAX+thw]) );
@@ -1517,7 +1517,15 @@ static void int_axt_com_h1( const UIN ompNT, const UIN bn, const UIN bs, const U
 		blkA[tid] = blk2[posBLK+thw-1];
 	}
 
-	#pragma omp parallel for default(shared) private(bid,vtAcu,tid,vtVal,vtRed) num_threads(ompNT) schedule(dynamic) if(_OPENMP)
+UIN i;
+for ( i = 0; i < 256; i++ )
+	printf( "pos:%3d  blk1:%17.1lf  blk2:%17.1lf\n", i, blk1[i], blk2[i] );
+printf( "\n" );
+
+for ( i = 0; i < 32; i++ )
+	printf( "pos:%3d  blkA:%17.1lf", i, blkA[i] );
+
+	//#pragma omp parallel for default(shared) private(bid,vtAcu,tid,vtVal,vtRed) num_threads(ompNT) schedule(dynamic) if(_OPENMP)
 	for ( bid = 0; bid < bn; bid++ )
 	{
 		vtAcu = _mm512_setzero_pd();
@@ -1528,11 +1536,35 @@ static void int_axt_com_h1( const UIN ompNT, const UIN bn, const UIN bs, const U
 			vtRed = _mm512_mask_add_pd( vtRed, mask2, vtRed, _mm512_permutexvar_pd( vtId2, vtRed ) );
 			vtRed = _mm512_mask_add_pd( vtRed, mask3, vtRed, _mm512_permutexvar_pd( vtId3, vtRed ) );
 			vtRed = _mm512_add_pd( vtRed, vtAcu );
-			_mm512_store_pd( &blkA[tid], vtRed );
-			vtAcu = _mm512_set1_pd( blkA[tid+thw-1] );
+			_mm512_store_pd( &blkA[bid*tpb+tid], vtRed );
+			vtAcu = _mm512_set1_pd( blkA[bid*tpb+tid+thw-1] );
 		}
 	}
 
+for ( i = 0; i < 32; i++ )
+	printf( "pos:%3d  blkA:%17.1lf", i, blkA[i] );
+
+	//#pragma omp parallel for default(shared) private(bid,vtAcu,tid,vtVal,vtRed) num_threads(ompNT) schedule(dynamic) if(_OPENMP)
+	for ( bid = 0; bid < bn; bid++ )
+	{
+		vtAcu = _mm512_setzero_pd();
+		for ( tid = 0; tid < tpb; tid = tid + thw )
+		{
+			vtVal = _mm512_load_pd( &blk2[bid*tpb+tid] );
+			vtRed = _mm512_add_pd( vtVal, vtAcu );
+			if ( (bid==0) || (bid==1) ) print__m512d( "vtRed", vtRed);
+			_mm512_store_pd( &blk2[bid*tpb+tid], vtRed );
+			vtAcu = _mm512_set1_pd( blkA[bid*tpb+tid] );
+		}
+	}
+
+for ( i = 0; i < 32; i++ )
+	printf( "pos:%3d  blkA:%17.1lf", i, blkA[i] );
+
+for ( i = 0; i < 256; i++ )
+	printf( "pos:%3d  blk1:%17.1lf  blk2:%17.1lf\n", i, blk1[i], blk2[i] );
+
+/*
 	#pragma omp parallel for default(shared) private(tid,posBLK,vtVal,vtAcu,vtRed) num_threads(ompNT) schedule(dynamic) if(_OPENMP)
 	for ( tid = 1, posBLK = 8; tid < tn; tid++, posBLK = posBLK + thw )
 	{
@@ -1541,6 +1573,10 @@ static void int_axt_com_h1( const UIN ompNT, const UIN bn, const UIN bs, const U
 		vtRed = _mm512_add_pd( vtVal, vtAcu );
 		_mm512_store_pd( &blk2[posBLK], vtRed );
 	}
+*/
+
+
+
 
 	#pragma omp parallel for default(shared) private(posBLK,ro,r,o,v) num_threads(ompNT) schedule(dynamic) if(_OPENMP)
 	for ( posBLK = 0; posBLK < lenRWP; posBLK++ )
@@ -1551,10 +1587,12 @@ static void int_axt_com_h1( const UIN ompNT, const UIN bn, const UIN bs, const U
 			r = ro >> log;
 			o = ro & (bs-1);
 			v = blk2[posBLK+o] - blk2[posBLK] + blk1[posBLK];
+			if (r==5) printf( "r:%4d, posBLK:%3d, o:%3d, blk2o:%22.1lf, blk2:%22.1lf, blk1:%22.1lf, v:%22.1lf\n", r, posBLK, o, blk2[posBLK+o], blk2[posBLK], blk1[posBLK], v );
 			#pragma omp atomic
 			y[r] = y[r] + v;
 		}
 	}
+
 	return;
 }
 
@@ -1565,8 +1603,12 @@ static str_res test_int_axt_com_h1( const UIN ompNT, const UIN bs, const str_mat
 	//
 	const UIN nrows  = matAXT.nrows;
 	const UIN nnz    = matAXT.nnz;
+	const UIN lenAX  = matAXT.lenAX;
+	const UIN lenSEC = matAXT.lenSEC;
+	const UIN log    = matAXT.log;
 	const UIN tn     = matAXT.tileN;
-	const UIN ts     = 2 * HBRICK_SIZE;
+	const UIN thw    = matAXT.tileHW;
+	const UIN ts     = 2 * thw;
 	const UIN bn     = ( (tn * HBRICK_SIZE) + bs - 1 ) / bs;
 	const UIN tpb    = bs / HBRICK_SIZE;
 	FPT * res = (FPT *) _mm_malloc( nrows   * sizeof(FPT), 64 ); TEST_POINTER( res );
@@ -1576,11 +1618,23 @@ static str_res test_int_axt_com_h1( const UIN ompNT, const UIN bs, const str_mat
 	struct timeval t1, t2;
 	UIN i;
 
+printf( "nrows:  %d\n", nrows  );
+printf( "nnz:    %d\n", nnz    );
+printf( "lenAX:  %d\n", lenAX  );
+printf( "lenSEC: %d\n", lenSEC );
+printf( "tn:     %d\n", tn     );
+printf( "thw:    %d\n", thw    );
+printf( "ts:     %d\n", ts     );
+printf( "bn:     %d\n", bn     );
+printf( "bs:     %d\n", bs     );
+printf( "log:    %d\n", log    );
+printf( "tpb:    %d\n", tpb    );
+
 /*
-for ( i = 0; i < matAXT.lenAX; i++ )
-	printf( "ax[%3d]:%3.0lf\n", i, matAXT.ax[i] );
-for ( i = 0; i < matAXT.lenSEC; i++ )
-	printf( "hdr[%3d]:%3d\n", i, matAXT.sec[i] );
+for ( i = 0; i < 112; i++ )
+	printf( "ax[%3d]: %26.16le\n", i, matAXT.ax[i] );
+for ( i = 0; i < 56; i++ )
+	printf( "hdr[%3d]: %5d\n", i, matAXT.sec[i] );
 fflush(stdout);
 */
 
@@ -1588,11 +1642,20 @@ fflush(stdout);
 	{
 		fill_array( ompNT, nrows, 0, res );
 		GT( t1 );
-		int_axt_com_h1( ompNT, bn, bs, matAXT.log, HBRICK_SIZE, matAXT.tileN, matAXT.lenAX, matAXT.lenSEC, matAXT.ax, matAXT.sec, res );
+		int_axt_com_h1( ompNT, bn, bs, log, thw, tn, lenAX, lenSEC, matAXT.ax, matAXT.sec, res );
 		GT( t2 );
 		ti = measureTime( t2, t1 );
 		tt = tt + ti;
 	}
+
+
+FPT dif;
+for ( i = 0; i < 6; i++ )
+{
+	dif = fabs( fabs(ref[i]) - fabs(res[i]) );
+	printf( "[ERROR]  row:%7d  ref:%22.1lf  res:%22.1lf   dif:%22.1lf\n", i, ref[i], res[i], dif );
+}
+
 
 	// store results
 	str_res sr;
@@ -1641,6 +1704,24 @@ int main( int argc, char ** argv )
 	str_res sr02 = test_mkl_CSR( matCSR, vr, yr );
 	str_res sr03 = test_sp_mkl_CSR( matCSR, vr, yr );
 	str_res sr04 = test_sp_insp_mkl_CSR( matCSR, vr, yr );
+
+
+
+FPT acu;
+UIN i, j;
+for ( i = 5; i < 6; i++ )
+{
+	acu = 0.0;
+	for ( j = matCSR.row[i]; j < matCSR.row[i+1]; j++ )
+	{
+		acu = acu + matCSR.val[j]*vr[matCSR.col[j]];
+		printf( "[CSR] row:%d  pos%2d  pro:%22.1lf  acu:%22.1lf\n", i, j, (matCSR.val[j] * vr[matCSR.col[j]]), acu );
+		//printf( "row:%3d  rowLen:%3d  pos:%3d  val:%20.10le:  vec:%20.10le  pro:%20.10le  acu:%20.10le\n", i, matCSR.rl[i], j, matCSR.val[j], vr[matCSR.col[j]], matCSR.val[j]*vr[matCSR.col[j]], acu );
+	}
+}
+
+
+
 	// CSR format  ------------------------------------------------------------------------------------------------------------------
 
 	// AXC format  ------------------------------------------------------------------------------------------------------------------
@@ -1683,7 +1764,7 @@ int main( int argc, char ** argv )
 	str_res sr11 = test_int_axt_noc( sia.ompMaxThreads, matAXT4, yr );
 	str_res sr12 = test_int_axt_noc( sia.ompMaxThreads, matAXT5, yr );
 	str_res sr13 = test_int_axt_noc( sia.ompMaxThreads, matAXT6, yr );
-	//str_res sr14 = test_int_axt_com_h1( sia.ompMaxThreads, bs, matAXT7, yr );
+	str_res sr14 = test_int_axt_com_h1( sia.ompMaxThreads, bs, matAXT7, yr );
 	// AXT format  ------------------------------------------------------------------------------------------------------------------
 
 
@@ -1702,7 +1783,7 @@ int main( int argc, char ** argv )
 	printf( "%25s %15.7lf %8.3lf %15.7lf %11.3le %13.3le %12d\n", sr11.name, sr11.et, ( sr11.flops * 1e-9 ), sr11.ot, sr11.sErr.aErr, sr11.sErr.rErr, sr11.sErr.pos ); fflush(stdout);
 	printf( "%25s %15.7lf %8.3lf %15.7lf %11.3le %13.3le %12d\n", sr12.name, sr12.et, ( sr12.flops * 1e-9 ), sr12.ot, sr12.sErr.aErr, sr12.sErr.rErr, sr12.sErr.pos ); fflush(stdout);
 	printf( "%25s %15.7lf %8.3lf %15.7lf %11.3le %13.3le %12d\n", sr13.name, sr13.et, ( sr13.flops * 1e-9 ), sr13.ot, sr13.sErr.aErr, sr13.sErr.rErr, sr13.sErr.pos ); fflush(stdout);
-	//printf( "%25s %15.7lf %8.3lf %15.7lf %11.3le %13.3le %12d\n", sr14.name, sr14.et, ( sr14.flops * 1e-9 ), sr14.ot, sr14.sErr.aErr, sr14.sErr.rErr, sr14.sErr.pos ); fflush(stdout);
+	printf( "%25s %15.7lf %8.3lf %15.7lf %11.3le %13.3le %12d\n", sr14.name, sr14.et, ( sr14.flops * 1e-9 ), sr14.ot, sr14.sErr.aErr, sr14.sErr.rErr, sr14.sErr.pos ); fflush(stdout);
 
 	return( EXIT_SUCCESS );
 }
