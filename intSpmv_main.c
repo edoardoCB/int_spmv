@@ -1491,92 +1491,37 @@ static str_res test_int_axt_noc( const UIN ompNT, const str_matAXT matAXT, const
 
 static void int_axt_com_h1( const UIN ompNT, const UIN bn, const UIN bs, const UIN log, const UIN thw, const UIN tn, const UIN lenAX, const UIN lenRWP, const FPT * ax, const UIN * rwp, FPT * y )
 {
-	const UIN ts  = 2 * thw;
-	const UIN tpb = bs / thw;
-	const UIN lenBlk1 = bn * bs;
-	const UIN lenBlkA = bn * tpb;
+	const UIN ts     = 2 * thw;
+	const UIN tpb    = bs / thw;
+	const UIN lbs    = tpb * ts;
+	const UIN lenBlk = bn * bs;
 	      UIN posAX, posBLK, bid, tid, ro, r, o;
 	      FPT v;
 	  __m512d vtVal, vtRed, vtAcu;
 	  __m512i vtId1  = _mm512_set_epi64( 6, 5, 4, 3, 2, 1, 0, 0 ); __mmask8 mask1 = 0xFE;
 	  __m512i vtId2  = _mm512_set_epi64( 5, 4, 3, 2, 1, 0, 1, 0 ); __mmask8 mask2 = 0xFC;
 	  __m512i vtId3  = _mm512_set_epi64( 3, 2, 1, 0, 3, 2, 1, 0 ); __mmask8 mask3 = 0xF0;
-	      FPT * blk1 = _mm_malloc( lenBlk1 * sizeof(FPT), 64 );
-	      FPT * blk2 = _mm_malloc( lenBlk1 * sizeof(FPT), 64 );
-	      FPT * blkA = _mm_malloc( lenBlkA * sizeof(FPT), 64 );
+	      FPT * blk1 = _mm_malloc( lenBlk * sizeof(FPT), 64 );
+	      FPT * blk2 = _mm_malloc( lenBlk * sizeof(FPT), 64 );
 
-	//#pragma omp parallel for default(shared) private(posAX,posBLK,tid,vtVal,vtRed) num_threads(ompNT) schedule(dynamic) if(_OPENMP)
-	for ( posAX = 0, posBLK = 0, tid = 0; posAX < lenAX; posAX = posAX + ts, posBLK = posBLK + thw, tid++ )
-	{
-		vtVal = _mm512_mul_pd( _mm512_load_pd(&ax[posAX]), _mm512_load_pd(&ax[posAX+thw]) );
-		_mm512_store_pd( &blk1[posBLK], vtVal );
-		vtRed = _mm512_mask_add_pd( vtVal, mask1, vtVal, _mm512_permutexvar_pd( vtId1, vtVal ) );
-		vtRed = _mm512_mask_add_pd( vtRed, mask2, vtRed, _mm512_permutexvar_pd( vtId2, vtRed ) );
-		vtRed = _mm512_mask_add_pd( vtRed, mask3, vtRed, _mm512_permutexvar_pd( vtId3, vtRed ) );
-		_mm512_store_pd( &blk2[posBLK], vtRed );
-		blkA[tid] = blk2[posBLK+thw-1];
-	}
-
-UIN i;
-for ( i = 0; i < 256; i++ )
-	printf( "pos:%3d  blk1:%17.1lf  blk2:%17.1lf\n", i, blk1[i], blk2[i] );
-printf( "\n" );
-
-for ( i = 0; i < 32; i++ )
-	printf( "pos:%3d  blkA:%17.1lf", i, blkA[i] );
-
-	//#pragma omp parallel for default(shared) private(bid,vtAcu,tid,vtVal,vtRed) num_threads(ompNT) schedule(dynamic) if(_OPENMP)
+	#pragma omp parallel for default(shared) private(bid,vtAcu,tid,posAX,vtVal,posBLK,vtRed) num_threads(ompNT) schedule(dynamic) if(_OPENMP)
 	for ( bid = 0; bid < bn; bid++ )
 	{
 		vtAcu = _mm512_setzero_pd();
-		for ( tid = 0; tid < tpb; tid = tid + thw )
+		for ( tid = 0; tid < tpb; tid++ )
 		{
-			vtVal = _mm512_load_pd( &blkA[bid*tpb+tid] );
+			posAX  = bid * lbs + tid * ts;
+			vtVal  = _mm512_mul_pd( _mm512_load_pd(&ax[posAX]), _mm512_load_pd(&ax[posAX+thw]) );
+			posBLK = bid * bs + tid * thw;
+			_mm512_store_pd( &blk1[posBLK], vtVal );
 			vtRed = _mm512_mask_add_pd( vtVal, mask1, vtVal, _mm512_permutexvar_pd( vtId1, vtVal ) );
 			vtRed = _mm512_mask_add_pd( vtRed, mask2, vtRed, _mm512_permutexvar_pd( vtId2, vtRed ) );
 			vtRed = _mm512_mask_add_pd( vtRed, mask3, vtRed, _mm512_permutexvar_pd( vtId3, vtRed ) );
 			vtRed = _mm512_add_pd( vtRed, vtAcu );
-			_mm512_store_pd( &blkA[bid*tpb+tid], vtRed );
-			vtAcu = _mm512_set1_pd( blkA[bid*tpb+tid+thw-1] );
+			_mm512_store_pd( &blk2[posBLK], vtRed );
+			vtAcu = _mm512_set1_pd( blk2[posBLK+thw-1] );
 		}
 	}
-
-for ( i = 0; i < 32; i++ )
-	printf( "pos:%3d  blkA:%17.1lf", i, blkA[i] );
-
-	//#pragma omp parallel for default(shared) private(bid,vtAcu,tid,vtVal,vtRed) num_threads(ompNT) schedule(dynamic) if(_OPENMP)
-	for ( bid = 0; bid < bn; bid++ )
-	{
-		vtAcu = _mm512_setzero_pd();
-		for ( tid = 0; tid < tpb; tid = tid + thw )
-		{
-			vtVal = _mm512_load_pd( &blk2[bid*tpb+tid] );
-			vtRed = _mm512_add_pd( vtVal, vtAcu );
-			if ( (bid==0) || (bid==1) ) print__m512d( "vtRed", vtRed);
-			_mm512_store_pd( &blk2[bid*tpb+tid], vtRed );
-			vtAcu = _mm512_set1_pd( blkA[bid*tpb+tid] );
-		}
-	}
-
-for ( i = 0; i < 32; i++ )
-	printf( "pos:%3d  blkA:%17.1lf", i, blkA[i] );
-
-for ( i = 0; i < 256; i++ )
-	printf( "pos:%3d  blk1:%17.1lf  blk2:%17.1lf\n", i, blk1[i], blk2[i] );
-
-/*
-	#pragma omp parallel for default(shared) private(tid,posBLK,vtVal,vtAcu,vtRed) num_threads(ompNT) schedule(dynamic) if(_OPENMP)
-	for ( tid = 1, posBLK = 8; tid < tn; tid++, posBLK = posBLK + thw )
-	{
-		vtVal = _mm512_load_pd( &blk2[posBLK] );
-		vtAcu = _mm512_set1_pd( blkA[tid-1] );
-		vtRed = _mm512_add_pd( vtVal, vtAcu );
-		_mm512_store_pd( &blk2[posBLK], vtRed );
-	}
-*/
-
-
-
 
 	#pragma omp parallel for default(shared) private(posBLK,ro,r,o,v) num_threads(ompNT) schedule(dynamic) if(_OPENMP)
 	for ( posBLK = 0; posBLK < lenRWP; posBLK++ )
@@ -1587,10 +1532,76 @@ for ( i = 0; i < 256; i++ )
 			r = ro >> log;
 			o = ro & (bs-1);
 			v = blk2[posBLK+o] - blk2[posBLK] + blk1[posBLK];
-			if (r==5) printf( "r:%4d, posBLK:%3d, o:%3d, blk2o:%22.1lf, blk2:%22.1lf, blk1:%22.1lf, v:%22.1lf\n", r, posBLK, o, blk2[posBLK+o], blk2[posBLK], blk1[posBLK], v );
 			#pragma omp atomic
 			y[r] = y[r] + v;
 		}
+	}
+
+	return;
+}
+
+
+
+static void int_axt_com_2h1( const UIN ompNT, const UIN bn, const UIN bs, const UIN log, const UIN thw, const UIN tn, const UIN lenAX, const UIN lenRWP, const FPT * ax, const UIN * rwp, FPT * y )
+{
+	const UIN ts     = 2 * thw;
+	const UIN tpb    = bs / thw;
+	const UIN lbs    = tpb * ts;
+	const UIN lenBlk = bn * bs;
+	      UIN posAX, posBLK, bid, tid, ro, r, o;
+	      FPT v;
+	  __m512d vtVal, vtRed, vtAcu;
+	  __m512i vtId1  = _mm512_set_epi64( 6, 5, 4, 3, 2, 1, 0, 0 ); __mmask8 mask1 = 0xFE;
+	  __m512i vtId2  = _mm512_set_epi64( 5, 4, 3, 2, 1, 0, 1, 0 ); __mmask8 mask2 = 0xFC;
+	  __m512i vtId3  = _mm512_set_epi64( 3, 2, 1, 0, 3, 2, 1, 0 ); __mmask8 mask3 = 0xF0;
+	      FPT * blk1 = _mm_malloc( lenBlk * sizeof(FPT), 64 );
+	      FPT * blk2 = _mm_malloc( lenBlk * sizeof(FPT), 64 );
+
+	#pragma omp parallel for default(shared) private(bid,vtAcu,tid,posAX,vtVal,posBLK,vtRed) num_threads(ompNT) schedule(dynamic) if(_OPENMP)
+	for ( bid = 0; bid < bn-1; bid++ )
+	{
+		vtAcu = _mm512_setzero_pd();
+		for ( tid = 0; tid < tpb; tid++ )
+		{
+			posAX  = bid * lbs + tid * ts;
+			vtVal  = _mm512_mul_pd( _mm512_load_pd(&ax[posAX]), _mm512_load_pd(&ax[posAX+thw]) );
+			posBLK = bid * bs + tid * thw;
+			_mm512_store_pd( &blk1[posBLK], vtVal );
+			vtRed = _mm512_mask_add_pd( vtVal, mask1, vtVal, _mm512_permutexvar_pd( vtId1, vtVal ) );
+			vtRed = _mm512_mask_add_pd( vtRed, mask2, vtRed, _mm512_permutexvar_pd( vtId2, vtRed ) );
+			vtRed = _mm512_mask_add_pd( vtRed, mask3, vtRed, _mm512_permutexvar_pd( vtId3, vtRed ) );
+			vtRed = _mm512_add_pd( vtRed, vtAcu );
+			_mm512_store_pd( &blk2[posBLK], vtRed );
+			vtAcu = _mm512_set1_pd( blk2[posBLK+thw-1] );
+		}
+
+		for ( posBLK = (rwp[bid]); posBLK < (); posBLK++ )
+		{
+			ro = rwp[posBLK];
+			if (ro!=0)
+			{
+				r = ro >> log;
+				o = ro & (bs-1);
+				v = blk2[posBLK+o] - blk2[posBLK] + blk1[posBLK];
+				#pragma omp atomic
+				y[r] = y[r] + v;
+			}
+		}
+	}
+
+	vtAcu = _mm512_setzero_pd();
+	for ( tid = 0; tid < tpb; tid++ )
+	{
+		posAX  = bid * lbs + tid * ts;
+		vtVal  = _mm512_mul_pd( _mm512_load_pd(&ax[posAX]), _mm512_load_pd(&ax[posAX+thw]) );
+		posBLK = bid * bs + tid * thw;
+		_mm512_store_pd( &blk1[posBLK], vtVal );
+		vtRed = _mm512_mask_add_pd( vtVal, mask1, vtVal, _mm512_permutexvar_pd( vtId1, vtVal ) );
+		vtRed = _mm512_mask_add_pd( vtRed, mask2, vtRed, _mm512_permutexvar_pd( vtId2, vtRed ) );
+		vtRed = _mm512_mask_add_pd( vtRed, mask3, vtRed, _mm512_permutexvar_pd( vtId3, vtRed ) );
+		vtRed = _mm512_add_pd( vtRed, vtAcu );
+		_mm512_store_pd( &blk2[posBLK], vtRed );
+		vtAcu = _mm512_set1_pd( blk2[posBLK+thw-1] );
 	}
 
 	return;
@@ -1617,27 +1628,6 @@ static str_res test_int_axt_com_h1( const UIN ompNT, const UIN bs, const str_mat
 	double ti = 0.0, tt = 0.0;
 	struct timeval t1, t2;
 	UIN i;
-
-printf( "nrows:  %d\n", nrows  );
-printf( "nnz:    %d\n", nnz    );
-printf( "lenAX:  %d\n", lenAX  );
-printf( "lenSEC: %d\n", lenSEC );
-printf( "tn:     %d\n", tn     );
-printf( "thw:    %d\n", thw    );
-printf( "ts:     %d\n", ts     );
-printf( "bn:     %d\n", bn     );
-printf( "bs:     %d\n", bs     );
-printf( "log:    %d\n", log    );
-printf( "tpb:    %d\n", tpb    );
-
-/*
-for ( i = 0; i < 112; i++ )
-	printf( "ax[%3d]: %26.16le\n", i, matAXT.ax[i] );
-for ( i = 0; i < 56; i++ )
-	printf( "hdr[%3d]: %5d\n", i, matAXT.sec[i] );
-fflush(stdout);
-*/
-
 	for ( i = 0; i < NUM_ITE; i++ )
 	{
 		fill_array( ompNT, nrows, 0, res );
@@ -1647,16 +1637,6 @@ fflush(stdout);
 		ti = measureTime( t2, t1 );
 		tt = tt + ti;
 	}
-
-
-FPT dif;
-for ( i = 0; i < 6; i++ )
-{
-	dif = fabs( fabs(ref[i]) - fabs(res[i]) );
-	printf( "[ERROR]  row:%7d  ref:%22.1lf  res:%22.1lf   dif:%22.1lf\n", i, ref[i], res[i], dif );
-}
-
-
 	// store results
 	str_res sr;
 	strcpy( sr.name, "int_axt_com_h1_hw8_bs" );
@@ -1704,24 +1684,6 @@ int main( int argc, char ** argv )
 	str_res sr02 = test_mkl_CSR( matCSR, vr, yr );
 	str_res sr03 = test_sp_mkl_CSR( matCSR, vr, yr );
 	str_res sr04 = test_sp_insp_mkl_CSR( matCSR, vr, yr );
-
-
-
-FPT acu;
-UIN i, j;
-for ( i = 5; i < 6; i++ )
-{
-	acu = 0.0;
-	for ( j = matCSR.row[i]; j < matCSR.row[i+1]; j++ )
-	{
-		acu = acu + matCSR.val[j]*vr[matCSR.col[j]];
-		printf( "[CSR] row:%d  pos%2d  pro:%22.1lf  acu:%22.1lf\n", i, j, (matCSR.val[j] * vr[matCSR.col[j]]), acu );
-		//printf( "row:%3d  rowLen:%3d  pos:%3d  val:%20.10le:  vec:%20.10le  pro:%20.10le  acu:%20.10le\n", i, matCSR.rl[i], j, matCSR.val[j], vr[matCSR.col[j]], matCSR.val[j]*vr[matCSR.col[j]], acu );
-	}
-}
-
-
-
 	// CSR format  ------------------------------------------------------------------------------------------------------------------
 
 	// AXC format  ------------------------------------------------------------------------------------------------------------------
@@ -1736,7 +1698,7 @@ for ( i = 5; i < 6; i++ )
 	// K1 format  -------------------------------------------------------------------------------------------------------------------
 
 	// AXT format  ------------------------------------------------------------------------------------------------------------------
-	UIN bs = 128;
+	UIN bs = 512;
 	str_matAXT matAXT1; str_formatData fd04 = getFormatDataAXT( sia.ompMaxThreads, bs, 8,  1, "NOC", matCSR, vr, &matAXT1 );
 	str_matAXT matAXT2; str_formatData fd05 = getFormatDataAXT( sia.ompMaxThreads, bs, 8,  4, "NOC", matCSR, vr, &matAXT2 );
 	str_matAXT matAXT3; str_formatData fd06 = getFormatDataAXT( sia.ompMaxThreads, bs, 8,  8, "NOC", matCSR, vr, &matAXT3 );
@@ -1767,7 +1729,6 @@ for ( i = 5; i < 6; i++ )
 	str_res sr14 = test_int_axt_com_h1( sia.ompMaxThreads, bs, matAXT7, yr );
 	// AXT format  ------------------------------------------------------------------------------------------------------------------
 
-
 	HDL; printf( "kernels' results\n" ); HDL;
 	printf( "%25s %15s %8s %15s %13s %13s %10s\n", "kernel", "exeTime [s]", "Gflops", "ordTime [s]", "aErr||.||inf", "rErr||.||inf", "rowInd" );
 	printf( "%25s %15.7lf %8.3lf %15.7lf %11.3le %13.3le %12d\n", sr01.name, sr01.et, ( sr01.flops * 1e-9 ), sr01.ot, sr01.sErr.aErr, sr01.sErr.rErr, sr01.sErr.pos ); fflush(stdout);
@@ -1787,5 +1748,6 @@ for ( i = 5; i < 6; i++ )
 
 	return( EXIT_SUCCESS );
 }
+
 
 
