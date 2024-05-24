@@ -1,5 +1,11 @@
+
 # int_spmv
 
+## License
+The code in this repository is licensed under the General Public License v3.
+See LICENSE.txt for details
+
+## Description
 The AXT format has been published in the paper "A new AXT format for an efficient SpMV product using AVX-512 instructions and CUDA" in the journal 
 Advances in Engineering Software. The paper can be found on the following link: https://www.sciencedirect.com/science/article/pii/S0965997821000260 .
 
